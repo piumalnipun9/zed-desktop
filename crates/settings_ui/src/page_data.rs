@@ -1,8 +1,8 @@
-use gpui::{Action as _, App, ReadGlobal as _};
+use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-    LanguageSettingsContent, SemanticTokens, SettingsContent, SettingsStore,
+    LanguageSettingsContent, SemanticTokens, SettingsContent,
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
@@ -14,7 +14,8 @@ use crate::{
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
         open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
-        render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
+        render_llm_providers_page, render_mcp_servers_page, render_paired_devices_page,
+        render_sandbox_settings_page,
         render_skills_setup_page, render_tool_permissions_setup_page,
     },
 };
@@ -78,7 +79,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-        mobile_gateway_page(cx),
+        mobile_gateway_page(),
         developer_page(cx),
     ]
 }
@@ -9216,14 +9217,8 @@ fn ai_page(cx: &App) -> SettingsPage {
     }
 }
 
-fn mobile_gateway_page(cx: &App) -> SettingsPage {
-    let paired_devices = SettingsStore::global(cx)
-        .raw_user_settings()
-        .and_then(|settings| settings.content.mobile_gateway.as_ref())
-        .and_then(|gateway| gateway.paired_devices.as_ref())
-        .cloned()
-        .unwrap_or_default();
-    let mut items = vec![
+fn mobile_gateway_page() -> SettingsPage {
+    let items = vec![
         SettingsPageItem::SectionHeader("Mobile Gateway"),
         SettingsPageItem::ActionLink(ActionLink {
             title: "Connect mobile device".into(),
@@ -9274,60 +9269,17 @@ fn mobile_gateway_page(cx: &App) -> SettingsPage {
             metadata: None,
             files: USER,
         }),
-    ];
-
-    if paired_devices.is_empty() {
-        items.push(SettingsPageItem::SectionHeader("Paired devices"));
-        items.push(SettingsPageItem::ActionLink(ActionLink {
-            title: "No paired mobile devices".into(),
-            description: Some(
-                "Use Connect mobile device to create a time-limited QR pairing code.".into(),
-            ),
-            button_text: "Connect".into(),
-            on_click: Arc::new(|settings_window, window, cx| {
-                let Some(original_window) = settings_window.original_window else {
-                    return;
-                };
-                if let Err(error) = original_window.update(cx, |_workspace, original_window, cx| {
-                    original_window
-                        .dispatch_action(zed_actions::OpenMobileGatewayPairing.boxed_clone(), cx);
-                    original_window.activate_window();
-                }) {
-                    log::error!("Could not open Mobile Gateway pairing dialog: {error}");
-                }
-                window.remove_window();
-            }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Paired Devices".into(),
+            r#type: Default::default(),
+            json_path: Some("mobile_gateway.paired_devices"),
+            description: Some("View and remove phones paired with this gateway.".into()),
+            search_aliases: &["mobile", "phone", "pairing", "revoke"],
+            in_json: false,
             files: USER,
-        }));
-    } else {
-        items.push(SettingsPageItem::SectionHeader("Paired devices"));
-        for device in paired_devices {
-            let device_id = device.id.clone();
-            let description = format!(
-                "Paired {}. Removing it immediately revokes this device's gateway access.",
-                device.created_at
-            );
-            items.push(SettingsPageItem::ActionLink(ActionLink {
-                title: device.label.into(),
-                description: Some(description.into()),
-                button_text: "Remove".into(),
-                on_click: Arc::new(move |_, _window, cx| {
-                    let device_id = device_id.clone();
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            if let Some(gateway) = settings.mobile_gateway.as_mut()
-                                && let Some(devices) = gateway.paired_devices.as_mut()
-                            {
-                                devices.retain(|device| device.id != device_id);
-                            }
-                        },
-                    );
-                }),
-                files: USER,
-            }));
-        }
-    }
+            render: render_paired_devices_page,
+        }),
+    ];
 
     SettingsPage {
         title: "Mobile Gateway",
